@@ -1,0 +1,78 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authRole() {
+      return isSignedIn() && request.auth.token.role is string
+        ? request.auth.token.role
+        : null;
+    }
+
+    function isUserOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isStaff() {
+      return authRole() == 'staff';
+    }
+
+    function isHospital() {
+      return authRole() == 'hospital' && request.auth.token.hospitalId is string;
+    }
+
+    function hospitalId() {
+      return isHospital() ? request.auth.token.hospitalId : null;
+    }
+
+    match /users/{uid} {
+      allow read: if isUserOwner(uid);
+      allow create: if isUserOwner(uid);
+      allow update: if isUserOwner(uid) &&
+        request.resource.data.uid == uid &&
+        request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    match /hospitals/{hospitalIdDoc} {
+      allow read: if isStaff() || (isHospital() && hospitalId() == hospitalIdDoc);
+      allow write: if false;
+    }
+
+    match /ambulances/{ambulanceId} {
+      allow read: if isStaff() ||
+        (isHospital() &&
+         resource.data.hospital_id is string &&
+         resource.data.hospital_id == hospitalId());
+      allow write: if false;
+    }
+
+    match /incidents/{incidentId} {
+      allow create: if isSignedIn() &&
+        request.resource.data.user_id == request.auth.uid &&
+        request.resource.data.status == 'created';
+      allow read: if isStaff() ||
+        (isSignedIn() && resource.data.user_id == request.auth.uid) ||
+        (isHospital() &&
+         resource.data.hospital_id is string &&
+         resource.data.hospital_id == hospitalId());
+      allow update: if isStaff() ||
+        (isSignedIn() &&
+         resource.data.user_id == request.auth.uid &&
+         request.resource.data.user_id == resource.data.user_id &&
+         request.resource.data.status == resource.data.status);
+      allow delete: if false;
+    }
+
+    match /dispatch_queue/{incidentId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
